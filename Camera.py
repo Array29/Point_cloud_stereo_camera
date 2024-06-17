@@ -181,6 +181,59 @@ class Camera:
         dist = np.linalg.norm(point - origin)
         print(f"Distance between camera and point: {dist} meters")
 
+
+    def split_point_cloud(self, pcd:o3d.geometry.PointCloud):
+        # pcd = o3d.io.read_point_cloud("/home/user/PycharmProjects/Astracam/point_cloud.pcd")
+        vis = o3d.visualization.VisualizerWithEditing()
+        vis.create_window()
+        vis.add_geometry(pcd)
+        vis.run()
+        vis.destroy_window()
+        picked_points = vis.get_picked_points()
+
+        if len(picked_points) >= 2:
+            print('Picked points')
+            point1 = np.asarray(pcd.points)[picked_points[0]]
+            point2 = np.asarray(pcd.points)[picked_points[1]]
+            print('Picked points: ', point1, point2)
+            middle = (point1 + point2) / 2
+            print('Middle: ', middle)
+            midpointX = middle[0]
+            print('midpointX: ', midpointX)
+
+            left_ind = [i for i in range(len(pcd.points)) if pcd.points[i][0] < midpointX]
+            right_ind = [i for i in range(len(pcd.points)) if pcd.points[i][0] >= midpointX]
+
+            left_ind_c = [i for i in range(len(pcd.colors)) if pcd.points[i][0] < midpointX]
+            right_ind_c = [i for i in range(len(pcd.colors)) if pcd.points[i][0] >= midpointX]
+
+            left_points_array = np.asarray(pcd.points)[left_ind]
+            right_points_array = np.asarray(pcd.points)[right_ind]
+
+            # R_right = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 1]])
+            # R_left = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
+
+            R_left = np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]])
+            R_right = np.array([[0, 0, -1], [0, 1, 0], [1, 0, 0]])
+
+            r_leftside = np.dot(left_points_array, R_right)
+            r_rightside = np.dot(right_points_array, R_left)
+
+            left_side = o3d.geometry.PointCloud()
+            right_side = o3d.geometry.PointCloud()
+            left_side.points = o3d.utility.Vector3dVector(r_leftside)
+            right_side.points = o3d.utility.Vector3dVector(r_rightside)
+
+            if pcd.has_colors():
+                left_colors_array = np.asarray(pcd.colors)[left_ind]
+                right_colors_array = np.asarray(pcd.colors)[right_ind]
+
+                left_side.colors = o3d.utility.Vector3dVector(left_colors_array)
+                right_side.colors = o3d.utility.Vector3dVector(right_colors_array)
+            o3d.visualization.draw_geometries([left_side, right_side])
+        else:
+            print("Please pick at least two points.")
+
     def stop_stream(self, stream):
         stream.stop()
         self.device.close()
