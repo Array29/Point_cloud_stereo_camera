@@ -98,11 +98,19 @@ class Camera:
 
             pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_image, intrinsics)
             pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
-            o3d.visualization.draw_geometries([pcd])
+            reflection_matrix = np.array([
+                [-1, 0, 0, 0],
+                [0, 1, 0, 0],
+                [0, 0, 1, 0],
+                [0, 0, 0, 1]
+            ])
+            mirrored_pcd = pcd.transform(reflection_matrix)
+
+            o3d.visualization.draw_geometries([mirrored_pcd])
 
             path = '/home/user/Desktop/images_python'
-            o3d.io.write_point_cloud(os.path.join(path, 'point_cloud.pcd'), pcd)
-            return pcd
+            o3d.io.write_point_cloud(os.path.join(path, 'point_cloud.pcd'), mirrored_pcd)
+            return mirrored_pcd
 
     def capture_PC_depth(self, depth_stream):
         depth_scale = 1000
@@ -182,19 +190,19 @@ class Camera:
         print(f"Distance between camera and point: {dist} meters")
 
 
-    def split_point_cloud(self, pcd:o3d.geometry.PointCloud):
+    def split_point_cloud(self, pcd:o3d.geometry.PointCloud, normal, picked_points):
         # pcd = o3d.io.read_point_cloud("/home/user/PycharmProjects/Astracam/point_cloud.pcd")
-        vis = o3d.visualization.VisualizerWithEditing()
-        vis.create_window()
-        vis.add_geometry(pcd)
-        vis.run()
-        vis.destroy_window()
-        picked_points = vis.get_picked_points()
+        # vis = o3d.visualization.VisualizerWithEditing()
+        # vis.create_window()
+        # vis.add_geometry(pcd)
+        # vis.run()
+        # vis.destroy_window()
+        # picked_points = vis.get_picked_points()
 
         if len(picked_points) >= 2:
             print('Picked points')
-            point1 = np.asarray(pcd.points)[picked_points[0]]
-            point2 = np.asarray(pcd.points)[picked_points[1]]
+            point2 = np.asarray(pcd.points)[picked_points[0]] # [0] - left object
+            point1 = np.asarray(pcd.points)[picked_points[1]] # [1] - right object
             print('Picked points: ', point1, point2)
             middle = (point1 + point2) / 2
             print('Middle: ', middle)
@@ -204,25 +212,13 @@ class Camera:
             left_ind = [i for i in range(len(pcd.points)) if pcd.points[i][0] < midpointX]
             right_ind = [i for i in range(len(pcd.points)) if pcd.points[i][0] >= midpointX]
 
-            left_ind_c = [i for i in range(len(pcd.colors)) if pcd.points[i][0] < midpointX]
-            right_ind_c = [i for i in range(len(pcd.colors)) if pcd.points[i][0] >= midpointX]
-
             left_points_array = np.asarray(pcd.points)[left_ind]
             right_points_array = np.asarray(pcd.points)[right_ind]
 
-            # R_right = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 1]])
-            # R_left = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
-
-            R_left = np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]])
-            R_right = np.array([[0, 0, -1], [0, 1, 0], [1, 0, 0]])
-
-            r_leftside = np.dot(left_points_array, R_right)
-            r_rightside = np.dot(right_points_array, R_left)
-
             left_side = o3d.geometry.PointCloud()
             right_side = o3d.geometry.PointCloud()
-            left_side.points = o3d.utility.Vector3dVector(r_leftside)
-            right_side.points = o3d.utility.Vector3dVector(r_rightside)
+            left_side.points = o3d.utility.Vector3dVector(left_points_array)
+            right_side.points = o3d.utility.Vector3dVector(right_points_array)
 
             if pcd.has_colors():
                 left_colors_array = np.asarray(pcd.colors)[left_ind]
@@ -230,9 +226,48 @@ class Camera:
 
                 left_side.colors = o3d.utility.Vector3dVector(left_colors_array)
                 right_side.colors = o3d.utility.Vector3dVector(right_colors_array)
+
+            angle = np.radians(90)
+            k = normal / np.linalg.norm(normal)
+
+            K = np.array([
+                [0, -k[2], k[1]],
+                [k[2], 0, -k[0]],
+                [-k[1], k[0], 0]
+            ])
+            I = np.eye(3)
+            R_left = I + np.sin(angle) * K + (1 - np.cos(angle)) * np.dot(K, K)
+            R_right = I + np.sin(-angle) * K + (1 - np.cos(-angle)) * np.dot(K, K)
+
+            right_side.rotate(R_right, center=point1)
+            left_side.rotate(R_left, center=point2)
+
             o3d.visualization.draw_geometries([left_side, right_side])
+            o3d.visualization.draw_geometries([left_side])
+            o3d.visualization.draw_geometries([right_side])
         else:
             print("Please pick at least two points.")
+
+    def normal(self, pcd):
+        vis = o3d.visualization.VisualizerWithEditing()
+        vis.create_window()
+        vis.add_geometry(pcd)
+        vis.run()
+        vis.destroy_window()
+        picked_points = vis.get_picked_points()
+
+        if len(picked_points)==3:
+            points = np.asarray(pcd.points)[picked_points]
+            p1, p2, p3 = points
+            v1 = p2 - p1
+            v2 = p3 - p1
+            norm = np.cross(v1, v2)
+            norm = norm / np.linalg.norm(norm)
+            d = -np.dot(norm, p1)
+            plane_model = np.append(norm, d)
+            normal = np.array(plane_model[:3])
+
+            return normal, picked_points
 
     def stop_stream(self, stream):
         stream.stop()
